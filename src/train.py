@@ -1,5 +1,6 @@
 import os
 import argparse
+import re
 import torch
 import torch.nn as nn
 import numpy as np
@@ -119,14 +120,14 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="results/checkpoints",
-        help="Diretório para salvar checkpoints",
+        default="results/runs",
+        help="Diretório base para salvar execuções (cada run cria uma subpasta com o método de treino)",
     )
     parser.add_argument(
         "--log-dir",
         type=str,
         default="results/logs",
-        help="Diretório para logs do TensorBoard",
+        help="Diretório base para logs do TensorBoard (cada run cria uma subpasta)",
     )
     parser.add_argument(
         "--data-root",
@@ -134,15 +135,46 @@ def parse_args():
         default="data/standarized",
         help="Diretório raiz dos dados padronizados",
     )
+
     return parser.parse_args()
+
+
+def _slugify(text: str) -> str:
+    text = text.strip().lower()
+    text = text.replace("/", "-")
+    text = re.sub(r"[^a-z0-9._-]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-")
+    return text or "run"
+
+
+def build_run_name(model_name: str, num_frames: int, freeze_strategy: str) -> str:
+    model_id = model_name.split("/")[-1]
+    return _slugify(f"{model_id}_frames{num_frames}_{freeze_strategy}")
 
 
 def main():
     args = parse_args()
     # Definições de Diretórios
     DATA_ROOT = os.path.abspath(args.data_root)
-    OUTPUT_DIR = args.output_dir
-    LOG_DIR = args.log_dir
+
+    run_name = build_run_name(
+        model_name=args.model_name,
+        num_frames=args.num_frames,
+        freeze_strategy=args.freeze_strategy,
+    )
+
+    # Estrutura de saída:
+    # <output-dir>/<run-name>/checkpoints
+    # <log-dir>/<run-name>
+    # <output-dir>/<run-name>/final_model
+    RUN_ROOT = os.path.join(args.output_dir, run_name)
+    OUTPUT_DIR = os.path.join(RUN_ROOT, "checkpoints")
+    LOG_DIR = os.path.join(args.log_dir, run_name)
+    FINAL_MODEL_DIR = os.path.join(RUN_ROOT, "final_model")
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
     
     # 1. Carregar Modelo e Processador
     model, processor = get_model_and_processor(args.model_name, num_labels=2)
@@ -250,8 +282,8 @@ def main():
     train_result = trainer.train()
     
     # 6. Salvar Modelo Final
-    print("Salvando modelo em results/final_model")
-    trainer.save_model("results/final_model")
+    print(f"Salvando modelo em {FINAL_MODEL_DIR}")
+    trainer.save_model(FINAL_MODEL_DIR)
     
     # Log de métricas finais
     metrics = train_result.metrics
