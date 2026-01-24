@@ -27,38 +27,37 @@ python unify_preprocess.py
 import os
 import csv
 import subprocess
+import argparse
+import yaml
+from pathlib import Path
 from tqdm import tqdm
 import pandas as pd
 
-# -------------------------
-# CONFIGURAÇÃO (edite aqui)
-# -------------------------
-# Pastas de origem (coloque os caminhos corretos)
-DCSASS_ROOT = '/home/luis/tcc/datasets/DCSASS_Dataset'  # pasta com subpastas por situação
-DCSASS_ANNOTATIONS_CSV = '/home/luis/tcc/datasets/DCSASS_Dataset/Shoplifting.csv'
-
-MNNIT_ROOT = '/home/luis/tcc/datasets/Shoplifting - MNNIT'
-S2_ROOT = '/home/luis/tcc/datasets/Shoplifting Dataset 2.0'
-
-# Pasta de saída unificada
-OUTPUT_ROOT = '/home/luis/tcc/timesformer/data/standarized'
-
-# Parâmetros de padronização
-TARGET_FPS = 25
-TARGET_W = 224
-TARGET_H = 224
-
-# Prefixos para evitar colisão de nomes
-PREFIX_DCSASS = 'dcsass'
-PREFIX_MNNIT = 'mnnit'
-PREFIX_S2 = 's2'
-
-# Nome temporário para arquivos de lista FFmpeg
-TMP_LIST_FILENAME = 'tmp_ffmpeg_file_list.txt'
-
-# Manifest final
-MANIFEST_FILENAME = 'manifest.csv'
-# -------------------------
+def get_default_config():
+    """
+    Retorna configuração padrão caso não seja fornecida via arquivo.
+    """
+    return {
+        'datasets': {
+            'dcsass_root': '/home/luis/tcc/datasets/DCSASS_Dataset',
+            'dcsass_annotations': '/home/luis/tcc/datasets/DCSASS_Dataset/Shoplifting.csv',
+            'mnnit_root': '/home/luis/tcc/datasets/Shoplifting - MNNIT',
+            's2_root': '/home/luis/tcc/datasets/Shoplifting Dataset 2.0',
+        },
+        'output': {
+            'root': '/home/luis/tcc/timesformer/data/standarized',
+            'target_fps': 25,
+            'target_w': 224,
+            'target_h': 224,
+        },
+        'prefixes': {
+            'dcsass': 'dcsass',
+            'mnnit': 'mnnit',
+            's2': 's2',
+        },
+        'tmp_list_filename': 'tmp_ffmpeg_file_list.txt',
+        'manifest_filename': 'manifest.csv'
+    }
 
 def ensure_ffmpeg_exists():
     try:
@@ -366,4 +365,85 @@ def main():
     print("=== PROCESSAMENTO CONCLUÍDO ===")
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description="Preprocessa datasets para TimeSformer")
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Arquivo de configuração YAML"
+    )
+    parser.add_argument(
+        "--dcsass-root",
+        type=str,
+        help="Caminho para DCSASS dataset"
+    )
+    parser.add_argument(
+        "--dcsass-annotations",
+        type=str,
+        help="Caminho para arquivo de anotações DCSASS"
+    )
+    parser.add_argument(
+        "--mnnit-root",
+        type=str,
+        help="Caminho para MNNIT dataset"
+    )
+    parser.add_argument(
+        "--s2-root",
+        type=str,
+        help="Caminho para Shoplifting Dataset 2.0"
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        help="Diretório de saída para dados padronizados"
+    )
+    
+    args = parser.parse_args()
+    
+    # Carrega configuração
+    if args.config and Path(args.config).exists():
+        with open(args.config, 'r') as f:
+            yaml_config = yaml.safe_load(f)
+        
+        config_data = {
+            'datasets': {
+                'dcsass_root': args.dcsass_root or yaml_config.get('data', {}).get('datasets', {}).get('dcsass', {}).get('root', ''),
+                'dcsass_annotations': args.dcsass_annotations or yaml_config.get('data', {}).get('datasets', {}).get('dcsass', {}).get('annotations', ''),
+                'mnnit_root': args.mnnit_root or yaml_config.get('data', {}).get('datasets', {}).get('mnnit', {}).get('root', ''),
+                's2_root': args.s2_root or yaml_config.get('data', {}).get('datasets', {}).get('shoplifting_2', {}).get('root', ''),
+            },
+            'output': {
+                'root': args.output_root or yaml_config.get('models', {}).get('timesformer', {}).get('data_dir', ''),
+                'target_fps': yaml_config.get('preprocessing', {}).get('timesformer', {}).get('target_fps', 25),
+                'target_w': yaml_config.get('preprocessing', {}).get('timesformer', {}).get('target_width', 224),
+                'target_h': yaml_config.get('preprocessing', {}).get('timesformer', {}).get('target_height', 224),
+            },
+            'prefixes': yaml_config.get('preprocessing', {}).get('timesformer', {}).get('prefixes', {
+                'dcsass': 'dcsass',
+                'mnnit': 'mnnit', 
+                's2': 's2'
+            }),
+            'tmp_list_filename': 'tmp_ffmpeg_file_list.txt',
+            'manifest_filename': 'manifest.csv'
+        }
+    else:
+        # Usar configuração padrão se não fornecida
+        config_data = get_default_config()
+        
+        if args.dcsass_root:
+            config_data['datasets']['dcsass_root'] = args.dcsass_root
+        if args.dcsass_annotations:
+            config_data['datasets']['dcsass_annotations'] = args.dcsass_annotations
+        if args.mnnit_root:
+            config_data['datasets']['mnnit_root'] = args.mnnit_root
+        if args.s2_root:
+            config_data['datasets']['s2_root'] = args.s2_root
+        if args.output_root:
+            config_data['output']['root'] = args.output_root
+        
+        print("  Usando configuração padrão. Forneça --config para customizar.")
+    
+    # Cria diretórios de saída
+    Path(config_data['output']['root']).mkdir(parents=True, exist_ok=True)
+    
+    success = main_preprocess_timesformer(config_data)
+    exit(0 if success else 1)
