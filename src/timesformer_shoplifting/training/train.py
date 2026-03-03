@@ -17,6 +17,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Silencia logs verbosos de requisições HTTP do HuggingFace Hub / httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+
 
 # ---------------------------------------------------------------------------
 # Dataclass de configuração - interface pública para chamadas externas

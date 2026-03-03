@@ -1,1 +1,2 @@
 from timesformer_shoplifting.training.train import TrainConfig, train
+from timesformer_shoplifting.training.find_max_batch_size import find_max_batch_size
