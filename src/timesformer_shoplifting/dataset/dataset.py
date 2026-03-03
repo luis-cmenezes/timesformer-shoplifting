@@ -73,7 +73,16 @@ class SecurityVideoDataset(Dataset):
     Mapeia a estrutura de pastas data/standarized/Normal e Shoplifting.
     """
     
-    def __init__(self, root_dir, image_processor, num_frames=8, split="train", label_map=None):
+    def __init__(
+        self,
+        root_dir,
+        image_processor,
+        num_frames=8,
+        split="train",
+        label_map=None,
+        augmentation_p_flip=0.5,
+        augmentation_color_jitter=None,
+    ):
         """
         Args:
             root_dir (str): Caminho para data/standarized
@@ -81,6 +90,8 @@ class SecurityVideoDataset(Dataset):
             num_frames (int): Número de quadros a serem amostrados (T). Padrão TimeSformer é 8.
             split (str): 'train', 'val' ou 'test'. Define a estratégia de amostragem.
             label_map (dict): Mapeamento opcional de string para int.
+            augmentation_p_flip (float): Probabilidade de flip horizontal.
+            augmentation_color_jitter (dict | None): Parâmetros do ColorJitter.
         """
         self.root_dir = root_dir
         self.image_processor = image_processor
@@ -89,14 +100,15 @@ class SecurityVideoDataset(Dataset):
         
         # Inicializa a augmentation (usada apenas em treino)
         if self.split == "train":
+            cj_params = augmentation_color_jitter if augmentation_color_jitter is not None else {
+                'brightness': 0.2,
+                'contrast': 0.2,
+                'saturation': 0.2,
+                'hue': 0.1,
+            }
             self.augmentation = VideoAugmentation(
-                p_flip=0.5,
-                color_jitter_params={
-                    'brightness': 0.2,
-                    'contrast': 0.2,
-                    'saturation': 0.2,
-                    'hue': 0.1
-                }
+                p_flip=augmentation_p_flip,
+                color_jitter_params=cj_params,
             )
         else:
             self.augmentation = None

@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import evaluate
+from dataclasses import dataclass, field
 from sklearn.metrics import roc_auc_score
 from transformers import TrainingArguments, Trainer, EarlyStoppingCallback
 from sklearn.model_selection import train_test_split
@@ -15,6 +16,50 @@ from timesformer_shoplifting.models.model_utils import get_model_and_processor, 
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Dataclass de configuração - interface pública para chamadas externas
+# ---------------------------------------------------------------------------
+@dataclass
+class TrainConfig:
+    """Configuração completa para um experimento de treino TimeSformer."""
+
+    # Checkpoint base do HuggingFace
+    model_name: str = "facebook/timesformer-base-finetuned-k400"
+
+    # Estratégia de fine-tuning: "unfreeze_head" | "unfreeze_all"
+    freeze_strategy: str = "unfreeze_head"
+
+    # Número de frames amostrados por vídeo
+    num_frames: int = 8
+
+    # Hiperparâmetros
+    epochs: int = 70
+    batch_size: int = 48
+    learning_rate: float = 1e-3
+    seed: int = 42
+    gradient_accumulation_steps: int = 1
+    dataloader_num_workers: int = 5
+    logging_steps: int = 10
+
+    # Caminhos
+    data_root: str = ""
+    output_dir: str = ""
+    log_dir: str = ""
+
+    # Divisão do dataset
+    split_test_size: float = 0.3
+    split_val_test_ratio: float = 0.5
+
+    # Data augmentation
+    augmentation_p_flip: float = 0.5
+    augmentation_color_jitter: dict = field(
+        default_factory=lambda: dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
+    )
+
+    # Early stopping
+    early_stopping_patience: int = 3
 
 def compute_metrics(eval_pred):
     """
@@ -92,7 +137,8 @@ class CustomTrainerWithClassWeights(Trainer):
         
         return (loss, outputs) if return_outputs else loss
 
-def parse_args():
+def parse_args() -> TrainConfig:
+    """Analisa argumentos CLI e devolve um TrainConfig (uso standalone)."""
     parser = argparse.ArgumentParser(description="Treino TimeSformer para Shoplifting")
     parser.add_argument(
         "--model-name",
@@ -136,7 +182,16 @@ def parse_args():
         help="Diretório raiz dos dados padronizados",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    return TrainConfig(
+        model_name=args.model_name,
+        freeze_strategy=args.freeze_strategy,
+        num_frames=args.num_frames,
+        output_dir=args.output_dir,
+        log_dir=args.log_dir,
+        data_root=args.data_root,
+    )
 
 
 def _slugify(text: str) -> str:
@@ -152,71 +207,93 @@ def build_run_name(model_name: str, num_frames: int, freeze_strategy: str) -> st
     return _slugify(f"{model_id}_frames{num_frames}_{freeze_strategy}")
 
 
-def main():
-    args = parse_args()
+def train(cfg: TrainConfig):
+    """Função principal que orquestra o treinamento do TimeSformer.
+
+    Args:
+        cfg: instância de TrainConfig com todos os parâmetros do experimento.
+    """
     # Definições de Diretórios
-    DATA_ROOT = os.path.abspath(args.data_root)
+    DATA_ROOT = os.path.abspath(cfg.data_root)
 
     run_name = build_run_name(
-        model_name=args.model_name,
-        num_frames=args.num_frames,
-        freeze_strategy=args.freeze_strategy,
+        model_name=cfg.model_name,
+        num_frames=cfg.num_frames,
+        freeze_strategy=cfg.freeze_strategy,
     )
 
     # Estrutura de saída:
     # <output-dir>/<run-name>/checkpoints
     # <log-dir>/<run-name>
     # <output-dir>/<run-name>/final_model
-    RUN_ROOT = os.path.join(args.output_dir, run_name)
+    RUN_ROOT = os.path.join(cfg.output_dir, run_name)
     OUTPUT_DIR = os.path.join(RUN_ROOT, "checkpoints")
-    LOG_DIR = os.path.join(args.log_dir, run_name)
+    LOG_DIR = os.path.join(cfg.log_dir, run_name)
     FINAL_MODEL_DIR = os.path.join(RUN_ROOT, "final_model")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(FINAL_MODEL_DIR, exist_ok=True)
+
+    print(f"Usando dispositivo: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+    print(f"Modelo: {cfg.model_name}")
+    print(f"Estratégia: {cfg.freeze_strategy} | Frames: {cfg.num_frames}")
+    print(f"Outputs: {RUN_ROOT}")
     
     # 1. Carregar Modelo e Processador
-    model, processor = get_model_and_processor(args.model_name, num_labels=2)
-    set_freeze_strategy(model, strategy=args.freeze_strategy)
+    model, processor = get_model_and_processor(cfg.model_name, num_labels=2)
+    set_freeze_strategy(model, strategy=cfg.freeze_strategy)
+
+    # Preparar parâmetros de augmentação
+    aug_color_jitter = cfg.augmentation_color_jitter if cfg.augmentation_color_jitter else None
     
     # 2. Preparar Dataset
     # Instanciamos um dataset temporário para obter os índices e labels
-    full_dataset_temp = SecurityVideoDataset(DATA_ROOT, processor, num_frames=args.num_frames, split="train")
+    full_dataset_temp = SecurityVideoDataset(
+        DATA_ROOT, processor, num_frames=cfg.num_frames, split="train",
+        augmentation_p_flip=cfg.augmentation_p_flip,
+        augmentation_color_jitter=aug_color_jitter,
+    )
     all_indices = list(range(len(full_dataset_temp)))
     all_labels = full_dataset_temp.labels
     
-    # Split 70/15/15 com estratificação
-    # Primeira divisão: 70% treino, 30% para validação + teste
+    # Split estratificado configurável
     train_idx, temp_idx = train_test_split(
         all_indices,
-        test_size=0.3,
+        test_size=cfg.split_test_size,
         stratify=all_labels,
-        random_state=42
+        random_state=cfg.seed,
     )
     
-    # Segunda divisão: divide os 30% em 50/50 → 15% validação, 15% teste
     temp_labels = [all_labels[i] for i in temp_idx]
     val_idx, test_idx = train_test_split(
         temp_idx,
-        test_size=0.5,
+        test_size=cfg.split_val_test_ratio,
         stratify=temp_labels,
-        random_state=42
+        random_state=cfg.seed,
     )
     
     # Criar datasets com split apropriado para cada um
     train_dataset = torch.utils.data.Subset(
-        SecurityVideoDataset(DATA_ROOT, processor, num_frames=args.num_frames, split="train"),
-        train_idx
+        SecurityVideoDataset(
+            DATA_ROOT, processor, num_frames=cfg.num_frames, split="train",
+            augmentation_p_flip=cfg.augmentation_p_flip,
+            augmentation_color_jitter=aug_color_jitter,
+        ),
+        train_idx,
     )
     
     val_dataset = torch.utils.data.Subset(
-        SecurityVideoDataset(DATA_ROOT, processor, num_frames=args.num_frames, split="val"),
-        val_idx
+        SecurityVideoDataset(
+            DATA_ROOT, processor, num_frames=cfg.num_frames, split="val",
+            augmentation_p_flip=cfg.augmentation_p_flip,
+            augmentation_color_jitter=aug_color_jitter,
+        ),
+        val_idx,
     )
     
     # Imprimir estatísticas do split
-    print("\n=== Dataset Split (70/30 em dois estágios: train/val) ===")
+    print("\n=== Dataset Split ===")
     print(f"Dataset Treino:     {len(train_dataset)} vídeos ({100*len(train_idx)/len(all_indices):.1f}%)")
     print(f"Dataset Validação:  {len(val_dataset)} vídeos ({100*len(val_idx)/len(all_indices):.1f}%)")
     
@@ -228,12 +305,10 @@ def main():
     print(f"Treino  - Normal: {sum(1 for label in train_labels if label == 0)}, Shoplifting: {sum(1 for label in train_labels if label == 1)}")
     print(f"Val     - Normal: {sum(1 for label in val_labels if label == 0)}, Shoplifting: {sum(1 for label in val_labels if label == 1)}\n")
     
-    # Calcular class weights para balanceamento (como no I3D)
+    # Calcular class weights para balanceamento
     num_normal = sum(1 for label in train_labels if label == 0)
     num_shoplifting = sum(1 for label in train_labels if label == 1)
     
-    # Fórmula: peso = num_classe_majoritária / num_classe_minoritária
-    # Se classe é minoritária, recebe peso > 1
     weight_normal = num_shoplifting / num_normal
     weight_shoplifting = num_normal / num_shoplifting
     
@@ -246,35 +321,39 @@ def main():
     # 3. Argumentos de Treinamento (Hyperparameters)
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
-        learning_rate=1e-3,              # LR baixo para Fine-tuning
-        per_device_train_batch_size=48, 
-        per_device_eval_batch_size=48,
-        gradient_accumulation_steps=1,
-        num_train_epochs=70,             
+        learning_rate=cfg.learning_rate,
+        per_device_train_batch_size=cfg.batch_size,
+        per_device_eval_batch_size=cfg.batch_size,
+        gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+        num_train_epochs=cfg.epochs,
+        seed=cfg.seed,
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        metric_for_best_model="auc_roc",  # AUC-ROC em vez de F1 (como no I3D)
+        metric_for_best_model="auc_roc",
         logging_dir=LOG_DIR,
-        logging_steps=10,
-        dataloader_num_workers=5,        # Paralelismo no carregamento do Decord
-        fp16=torch.cuda.is_available(),  # Mixed Precision (Nvidia GPUs only)
-        remove_unused_columns=False,     # Importante para datasets customizados
+        logging_steps=cfg.logging_steps,
+        dataloader_num_workers=cfg.dataloader_num_workers,
+        fp16=torch.cuda.is_available(),
+        remove_unused_columns=False,
         report_to="tensorboard",
-        greater_is_better=True
+        greater_is_better=True,
     )
     
     # 4. Inicializar Trainer
+    early_stopping_patience = cfg.early_stopping_patience
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)] if early_stopping_patience > 0 else []
+
     trainer = CustomTrainerWithClassWeights(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
-        processing_class=processor,             # Passamos o processor como tokenizer para salvar config
+        processing_class=processor,
         compute_metrics=compute_metrics,
         data_collator=collate_fn,
-        class_weights=class_weights,     # Passa os pesos das classes
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)] # Para se não melhorar em 3 épocas
+        class_weights=class_weights,
+        callbacks=callbacks,
     )
     
     # 5. Iniciar Treino
@@ -303,4 +382,5 @@ def main():
     print("="*50 + "\n")
     
 if __name__ == "__main__":
-    main()
+    cfg = parse_args()
+    train(cfg)
