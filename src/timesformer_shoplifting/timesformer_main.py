@@ -10,7 +10,7 @@ def main_preprocess_timesformer(config_data):
     Args:
         config_data: Dicionário com configurações
     """
-    from process_and_standarize_data import (
+    from timesformer_shoplifting.process_and_standarize_data import (
         ensure_ffmpeg_exists, safe_makedirs, load_annotations as load_dcsass_annotations,
         identify_event_blocks_with_context, process_simple_dataset,
         write_ffmpeg_file_list, run_ffmpeg_concat_and_standardize

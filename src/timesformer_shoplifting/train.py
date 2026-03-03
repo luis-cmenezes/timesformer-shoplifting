@@ -8,8 +8,8 @@ import evaluate
 from sklearn.metrics import roc_auc_score
 from transformers import TrainingArguments, Trainer, EarlyStoppingCallback
 from sklearn.model_selection import train_test_split
-from dataset import SecurityVideoDataset
-from model_utils import get_model_and_processor, set_freeze_strategy
+from timesformer_shoplifting.dataset import SecurityVideoDataset
+from timesformer_shoplifting.model_utils import get_model_and_processor, set_freeze_strategy
 
 # Configuração de Logs
 import logging
