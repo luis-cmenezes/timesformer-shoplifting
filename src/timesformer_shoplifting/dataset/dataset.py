@@ -39,32 +39,22 @@ class VideoAugmentation:
         
         self.color_jitter = transforms.ColorJitter(**color_jitter_params)
     
-    def __call__(self, pixel_values):
+    def __call__(self, video_tensor):
         """
         Aplica augmentation ao tensor de vídeo RGB.
-        
         Args:
-            pixel_values (torch.Tensor): Tensor (T, C, H, W) com valores em [0, 1]
-        
-        Returns:
-            torch.Tensor: Tensor augmentado
+            video_tensor (torch.Tensor): Tensor (T, C, H, W)
         """
         # Horizontal Flip (50% de probabilidade)
         if random.random() < self.p_flip:
-            pixel_values = torch.flip(pixel_values, dims=[-1])  # Flip no eixo W (largura)
+            video_tensor = torch.flip(video_tensor, dims=[-1])  # Flip no eixo W (largura)
         
-        # Color Jitter (aplicado a todos os frames)
-        # ColorJitter espera (C, H, W) ou (3, H, W) ou lista de imagens
-        # Aplicamos frame a frame para manter consistência
-        augmented_frames = []
-        for frame in pixel_values:  # Itera sobre T (tempo)
-            # frame tem shape (C, H, W) = (3, 224, 224)
-            augmented_frame = self.color_jitter(frame)
-            augmented_frames.append(augmented_frame)
+        # Color Jitter aplicado ao tensor (T, C, H, W) inteiro de uma vez!
+        # O v2 garante que o MESMO jitter seja aplicado a todos os frames,
+        # mantendo a consistência temporal e evitando o efeito "pisca-pisca".
+        video_tensor = self.color_jitter(video_tensor)
         
-        pixel_values = torch.stack(augmented_frames, dim=0)  # Volta para (T, C, H, W)
-        
-        return pixel_values
+        return video_tensor
 
 
 class SecurityVideoDataset(Dataset):
@@ -200,6 +190,10 @@ class SecurityVideoDataset(Dataset):
             # O decord retorna uint8. O Processor converte para float e normaliza (ImageNet stats).
             video_data = video_data.permute(0, 3, 1, 2) 
             
+            # Aplicar Data Augmentation apenas durante treinamento
+            if self.augmentation is not None:
+                video_data = self.augmentation(video_data)
+
             # Aplicar o processador de imagem (Resize, CenterCrop, Normalize)
             # input deve ser lista de tensores ou numpy arrays
             inputs = self.image_processor(list(video_data), return_tensors="pt")
@@ -207,10 +201,6 @@ class SecurityVideoDataset(Dataset):
             # O output é um dicionário {'pixel_values': tensor(1, T, C, H, W)}
             # Removemos a dimensão de batch extra (1) criada pelo processor
             pixel_values = inputs.pixel_values.squeeze(0)
-            
-            # Aplicar Data Augmentation apenas durante treinamento
-            if self.augmentation is not None:
-                pixel_values = self.augmentation(pixel_values)
             
             return {
                 "pixel_values": pixel_values, 

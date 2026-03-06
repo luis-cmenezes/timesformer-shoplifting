@@ -245,7 +245,9 @@ def train(cfg: TrainConfig):
     print(f"Outputs: {RUN_ROOT}")
     
     # 1. Carregar Modelo e Processador
-    model, processor = get_model_and_processor(cfg.model_name, num_labels=2)
+    model, processor = get_model_and_processor(
+        cfg.model_name, num_labels=2, num_frames=cfg.num_frames,
+    )
     set_freeze_strategy(model, strategy=cfg.freeze_strategy)
 
     # Preparar parâmetros de augmentação
