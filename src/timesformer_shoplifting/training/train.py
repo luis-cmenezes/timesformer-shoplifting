@@ -245,10 +245,15 @@ def train(cfg: TrainConfig):
     print(f"Outputs: {RUN_ROOT}")
     
     # 1. Carregar Modelo e Processador
-    model, processor = get_model_and_processor(
+    model, processor, interpolated = get_model_and_processor(
         cfg.model_name, num_labels=2, num_frames=cfg.num_frames,
     )
-    set_freeze_strategy(model, strategy=cfg.freeze_strategy)
+
+    set_freeze_strategy(
+        model,
+        strategy=cfg.freeze_strategy,
+        unfreeze_time_embeddings=interpolated,
+    )
 
     # Preparar parâmetros de augmentação
     aug_color_jitter = cfg.augmentation_color_jitter if cfg.augmentation_color_jitter else None

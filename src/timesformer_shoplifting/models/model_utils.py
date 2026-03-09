@@ -85,16 +85,18 @@ def get_model_and_processor(
     print()
 
     # --- Passo 2: Se o num_frames desejado difere, interpolar time_embeddings ---
+    is_interpolated = False
     if num_frames != original_num_frames:
+        is_interpolated = True
         _interpolate_temporal_embeddings(model, target_num_frames=num_frames)
         print(f"  Modelo configurado para {num_frames} frames (original: {original_num_frames})")
     else:
         print(f"  Modelo configurado para {num_frames} frames (padrão do checkpoint)")
 
-    return model, processor
+    return model, processor, is_interpolated
 
 
-def set_freeze_strategy(model, strategy):
+def set_freeze_strategy(model, strategy, unfreeze_time_embeddings=False):
     """
     Define a estratégia de congelamento de parâmetros do modelo.
     
@@ -103,7 +105,16 @@ def set_freeze_strategy(model, strategy):
         strategy (str): 
             - "unfreeze_head": Congela backbone, descongelado apenas o classificador (head)
             - "unfreeze_all": Descongela todo o modelo para Fine-Tuning completo
+        unfreeze_time_embeddings (bool): Se True e strategy == 'unfreeze_head',
+            descongela os time_embeddings (útil quando foram interpolados para
+            um num_frames diferente do original).
     """
+    
+    # Descongela time_embeddings se foram interpolados (num_frames diferente do original)
+    if unfreeze_time_embeddings:
+        model.timesformer.embeddings.time_embeddings.requires_grad = True
+        print("- Numero de frames diferente do original. time_embeddings serão treinados.")
+
     if strategy == "unfreeze_head":
         # Congela tudo primeiro
         for param in model.timesformer.parameters():
@@ -112,7 +123,8 @@ def set_freeze_strategy(model, strategy):
         # Garante que a cabeça de classificação (classifier) esteja descongelada
         for param in model.classifier.parameters():
             param.requires_grad = True
-        print("- Backbone congelado. Apenas o classificador (head) será treinado.")
+
+        print("- Backbone congelado. O classificador (head) será treinado.")
         
     elif strategy == "unfreeze_all":
         # Descongela tudo
