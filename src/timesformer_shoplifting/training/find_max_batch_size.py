@@ -99,10 +99,10 @@ def find_max_batch_size(
           f"frames={num_frames}, fp16={use_fp16}) ...")
 
     # --- Instancia modelo ---
-    model, _processor = get_model_and_processor(
+    model, _processor, interpolated = get_model_and_processor(
         model_name, num_labels=2, num_frames=num_frames,
     )
-    set_freeze_strategy(model, strategy=freeze_strategy)
+    set_freeze_strategy(model, strategy=freeze_strategy, unfreeze_time_embeddings=interpolated)
     model.to(device)
     model.train()
 
