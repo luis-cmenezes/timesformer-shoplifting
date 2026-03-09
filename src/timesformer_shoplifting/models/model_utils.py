@@ -110,10 +110,6 @@ def set_freeze_strategy(model, strategy, unfreeze_time_embeddings=False):
             um num_frames diferente do original).
     """
     
-    # Descongela time_embeddings se foram interpolados (num_frames diferente do original)
-    if unfreeze_time_embeddings:
-        model.timesformer.embeddings.time_embeddings.requires_grad = True
-        print("- Numero de frames diferente do original. time_embeddings serão treinados.")
 
     if strategy == "unfreeze_head":
         # Congela tudo primeiro
@@ -134,3 +130,8 @@ def set_freeze_strategy(model, strategy, unfreeze_time_embeddings=False):
     
     else:
         raise ValueError(f"strategy deve ser 'unfreeze_head' ou 'unfreeze_all'. Recebido: {strategy}")
+   
+    # Descongela time_embeddings se foram interpolados (num_frames diferente do original)
+    if unfreeze_time_embeddings:
+        model.timesformer.embeddings.time_embeddings.requires_grad = True
+        print("- Numero de frames diferente do original. time_embeddings serão treinados.")
